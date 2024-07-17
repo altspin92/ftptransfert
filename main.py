@@ -13,8 +13,8 @@ class MainWindow(QWidget):
         super().__init__()
         self.initUI()
         self.timer = QTimer(self)
-        self.timer.timeout.connect(self.upload_files)  # Connetti il timer alla funzione upload_files
-        self.timer.start(60000)  # Imposta il timer per eseguire ogni minuto (60000 ms)
+        self.timer.timeout.connect(self.upload_files)  # Connect the timer to the upload_files function
+        self.timer.start(60000)  # Set the timer to run every minute (60000 ms)
 
     def initUI(self):
         layout = QVBoxLayout()
@@ -24,7 +24,7 @@ class MainWindow(QWidget):
 
         self.port_label = QLabel("SFTP Port:")
         self.port_line_edit = QLineEdit()
-        self.port_line_edit.setText("22")  # Porta predefinita
+        self.port_line_edit.setText("22")  # Default port
 
         self.username_label = QLabel("Username:")
         self.username_line_edit = QLineEdit()
@@ -43,7 +43,7 @@ class MainWindow(QWidget):
         self.file_list = QListWidget()
 
         self.upload_button = QPushButton("Upload Now")
-        self.test_conn_button = QPushButton("Test Connection")  # Pulsante di test connessione
+        self.test_conn_button = QPushButton("Test Connection")
 
         layout.addWidget(self.host_label)
         layout.addWidget(self.host_line_edit)
@@ -60,13 +60,13 @@ class MainWindow(QWidget):
         layout.addWidget(self.remote_dir_line_edit)
         layout.addWidget(self.file_list)
         layout.addWidget(self.upload_button)
-        layout.addWidget(self.test_conn_button)  # Aggiungi il pulsante alla UI
+        layout.addWidget(self.test_conn_button)
 
         self.setLayout(layout)
 
         self.local_dir_button.clicked.connect(self.choose_local_directory)
         self.upload_button.clicked.connect(self.upload_files)
-        self.test_conn_button.clicked.connect(self.test_connection)  # Connetti il pulsante alla funzione
+        self.test_conn_button.clicked.connect(self.test_connection)
 
     def choose_local_directory(self):
         dir = QFileDialog.getExistingDirectory(self, "Choose Directory", "",
@@ -88,15 +88,12 @@ class MainWindow(QWidget):
 
         try:
             print(f"Connecting to {host}:{port} with username {username}")
-            print(f"Local directory: {local_dir}")
-            print(f"Remote directory: {remote_dir}")
             sftp_client = SftpClient(host, port, username, password)
             sftp_client.connect()
             print("Connection successful")
 
-            successfully_uploaded_files = []  # Lista per tenere traccia dei file caricati con successo
+            successfully_uploaded_files = []
 
-            # Upload files from local_dir to remote_dir
             for root, dirs, files in os.walk(local_dir):
                 for file in files:
                     local_file = os.path.join(root, file)
@@ -108,17 +105,16 @@ class MainWindow(QWidget):
                     except Exception as e:
                         print(f"Failed to upload {local_file}: {e}")
 
-            # Delete local files after upload
-            for local_file in successfully_uploaded_files:
-                self.delete_local_file(local_file)
+            if successfully_uploaded_files:  # Check if files were uploaded
+                for local_file in successfully_uploaded_files:
+                    self.delete_local_file(local_file)
 
-            files = sftp_client.list_files(remote_dir)
-            self.file_list.clear()
-            self.file_list.addItems(files)
-            sftp_client.close()
+                files = sftp_client.list_files(remote_dir)
+                self.file_list.clear()
+                self.file_list.addItems(files)
+                sftp_client.close()
 
-            # Invia email dopo aver caricato i file
-            self.send_email(successfully_uploaded_files)
+                self.send_email(successfully_uploaded_files)
 
         except Exception as e:
             QMessageBox.critical(self, "Error", str(e))
@@ -132,18 +128,16 @@ class MainWindow(QWidget):
             print(f"Failed to delete local file {local_file}: {e}")
 
     def send_email(self, files_uploaded):
-        sender_email = "your_email@example.com"
-        receiver_email = "receiver_email@example.com"
+        sender_email = "info@hacklabmondovi.it"
+        receiver_email = "it@bizpal.it"
         subject = "File Upload Notification"
         body = f"The following files have been uploaded successfully:\n\n" + "\n".join(files_uploaded)
         
-        # Configura il server SMTP
-        smtp_server = "smtp.example.com"
+        smtp_server = "mail.tophost.it"
         smtp_port = 587
-        smtp_username = "your_email@example.com"
-        smtp_password = "your_email_password"
+        smtp_username = "hacklabmondovi.it75546"
+        smtp_password = "Alt!!spin92"
 
-        # Crea l'email
         msg = MIMEMultipart()
         msg['From'] = sender_email
         msg['To'] = receiver_email
@@ -187,6 +181,6 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
     mainWin = MainWindow()
     mainWin.setWindowTitle("SFTP File Upload")
-    mainWin.resize(400, 400)  # Modificato per accogliere i nuovi campi di input
+    mainWin.resize(400, 400)
     mainWin.show()
     sys.exit(app.exec_())
