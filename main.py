@@ -128,15 +128,15 @@ class MainWindow(QWidget):
             print(f"Failed to delete local file {local_file}: {e}")
 
     def send_email(self, files_uploaded):
-        sender_email = "info@hacklabmondovi.it"
-        receiver_email = "it@bizpal.it"
+        sender_email = ""
+        receiver_email = ""
         subject = "File Upload Notification"
         body = f"The following files have been uploaded successfully:\n\n" + "\n".join(files_uploaded)
         
-        smtp_server = "mail.tophost.it"
+        smtp_server = ""
         smtp_port = 587
-        smtp_username = "hacklabmondovi.it75546"
-        smtp_password = "Alt!!spin92"
+        smtp_username = ""
+        smtp_password = ""
 
         msg = MIMEMultipart()
         msg['From'] = sender_email
