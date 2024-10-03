@@ -2,51 +2,90 @@ import os
 import paramiko
 
 class SftpClient:
-    def __init__(self, host, port, username, password):
+    def __init__(self, host, port, username, password, log_callback=None):
         self.host = host
         self.port = port
         self.username = username
         self.password = password
         self.transport = None
         self.sftp = None
+        self.log_callback = log_callback
 
     def connect(self):
         try:
+            self.log("Attempting to establish SFTP connection...")
             self.transport = paramiko.Transport((self.host, self.port))
             self.transport.connect(username=self.username, password=self.password)
             self.sftp = paramiko.SFTPClient.from_transport(self.transport)
-            print("SFTP connection established")
+            self.log("SFTP connection established")
         except paramiko.AuthenticationException:
-            print("Authentication failed, please verify your credentials")
+            self.log("Authentication failed, please verify your credentials")
             raise
         except paramiko.SSHException as sshException:
-            print(f"Unable to establish SSH connection: {sshException}")
+            self.log(f"Unable to establish SSH connection: {sshException}")
             raise
         except Exception as e:
-            print(f"Exception in connecting to the server: {e}")
+            self.log(f"Exception in connecting to the server: {e}")
             raise
 
-    def list_files(self, remote_dir):
+    def upload_from_local_to_remote(self, local_dir, remote_dir):
+        files_transferred = []
         try:
-            files = self.sftp.listdir(remote_dir)
-            return files
-        except IOError as e:
-            print(f"Failed to list directory {remote_dir}: {e}")
+            self.log(f"Starting upload from {local_dir} to {remote_dir}")
+            for file in os.listdir(local_dir):
+                local_file = os.path.join(local_dir, file)
+                remote_file = os.path.join(remote_dir, file.replace("\\", "/"))
+                self.upload_file(local_file, remote_file)
+                files_transferred.append(file)
+                os.remove(local_file)  # Delete the local file after successful upload
+            self.log("File upload complete.")
+        except Exception as e:
+            self.log(f"Error during file upload: {e}")
             raise
+        return files_transferred
+
+    def synchronize_and_clear_remote(self, remote_dir, local_dir):
+        files_transferred = []
+        try:
+            self.log(f"Starting synchronization from {remote_dir} to {local_dir}")
+            files = self.sftp.listdir(remote_dir)
+            for file in files:
+                remote_file = os.path.join(remote_dir, file.replace("\\", "/"))
+                local_file = os.path.join(local_dir, file)
+                self.download_file(remote_file, local_file)
+                self.sftp.remove(remote_file)  # Remove the remote file after download
+                files_transferred.append(file)
+            self.log("File synchronization and removal complete.")
+        except Exception as e:
+            self.log(f"Error during file synchronization: {e}")
+            raise
+        return files_transferred
 
     def download_file(self, remote_file, local_file):
         try:
+            self.log(f"Downloading {remote_file} to {local_file}")
             self.sftp.get(remote_file, local_file)
-        except IOError as e:
-            print(f"Failed to download file {remote_file}: {e}")
+            self.log(f"Downloaded file: {remote_file} to {local_file}")
+        except Exception as e:
+            self.log(f"Failed to download file {remote_file}: {e}")
             raise
 
     def upload_file(self, local_file, remote_file):
         try:
+            self.log(f"Uploading {local_file} to {remote_file}")
             self.sftp.put(local_file, remote_file)
-            print(f"Uploaded file: {local_file} to {remote_file}")
-        except IOError as e:
-            print(f"Failed to upload file {local_file}: {e}")
+            self.log(f"Uploaded file: {local_file} to {remote_file}")
+        except Exception as e:
+            self.log(f"Failed to upload file {local_file}: {e}")
+            raise
+
+    def remove_file(self, remote_file):
+        try:
+            self.log(f"Deleting remote file: {remote_file}")
+            self.sftp.remove(remote_file)
+            self.log(f"Deleted remote file: {remote_file}")
+        except Exception as e:
+            self.log(f"Failed to delete remote file {remote_file}: {e}")
             raise
 
     def close(self):
@@ -54,25 +93,8 @@ class SftpClient:
             self.sftp.close()
         if self.transport:
             self.transport.close()
-        print("SFTP connection closed")
+        self.log("SFTP connection closed")
 
-    def synchronize_and_clear_local(self, local_dir, remote_dir):
-        # Upload files from local_dir to remote_dir
-        for root, dirs, files in os.walk(local_dir):
-            for file in files:
-                local_file = os.path.join(root, file)
-                remote_file = os.path.join(remote_dir, file).replace("\\", "/")
-                self.upload_file(local_file, remote_file)
-                
-        # Delete local files after upload
-        self.clear_local_directory(local_dir)
-
-    def clear_local_directory(self, local_dir):
-        for root, dirs, files in os.walk(local_dir):
-            for file in files:
-                local_file = os.path.join(root, file)
-                try:
-                    os.remove(local_file)
-                    print(f"Deleted local file: {local_file}")
-                except Exception as e:
-                    print(f"Failed to delete local file {local_file}: {e}")
+    def log(self, message):
+        if self.log_callback:
+            self.log_callback(message)
