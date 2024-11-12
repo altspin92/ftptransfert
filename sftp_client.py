@@ -1,5 +1,6 @@
 import os
 import paramiko
+import stat
 
 class SftpClient:
     def __init__(self, host, port, username, password, log_callback=None):
@@ -35,9 +36,10 @@ class SftpClient:
             for file in os.listdir(local_dir):
                 local_file = os.path.join(local_dir, file)
                 remote_file = os.path.join(remote_dir, file.replace("\\", "/"))
-                self.upload_file(local_file, remote_file)
-                files_transferred.append(file)
-                os.remove(local_file)  # Delete the local file after successful upload
+                if os.path.isfile(local_file):  # Ensure only files are uploaded
+                    self.upload_file(local_file, remote_file)
+                    files_transferred.append(file)
+                    os.remove(local_file)  # Delete the local file after successful upload
             self.log("File upload complete.")
         except Exception as e:
             self.log(f"Error during file upload: {e}")
@@ -48,18 +50,32 @@ class SftpClient:
         files_transferred = []
         try:
             self.log(f"Starting synchronization from {remote_dir} to {local_dir}")
-            files = self.sftp.listdir(remote_dir)
-            for file in files:
-                remote_file = os.path.join(remote_dir, file.replace("\\", "/"))
-                local_file = os.path.join(local_dir, file)
-                self.download_file(remote_file, local_file)
-                self.sftp.remove(remote_file)  # Remove the remote file after download
-                files_transferred.append(file)
+            files = self.list_files(remote_dir)  # Use list_files to get only files
+            for file_attr in files:
+                if isinstance(file_attr, paramiko.SFTPAttributes):  # Ensures correct object type
+                    remote_file = os.path.join(remote_dir, file_attr.filename.replace("\\", "/"))
+                    local_file = os.path.join(local_dir, file_attr.filename)
+                    self.download_file(remote_file, local_file)
+                    self.sftp.remove(remote_file)  # Remove the remote file after download
+                    files_transferred.append(file_attr.filename)
             self.log("File synchronization and removal complete.")
         except Exception as e:
             self.log(f"Error during file synchronization: {e}")
             raise
         return files_transferred
+
+    def list_files(self, remote_directory):
+        """List only files in the specified remote directory."""
+        files = []
+        try:
+            for entry in self.sftp.listdir_attr(remote_directory):
+                self.log(f"Entry: {entry.filename}, Mode: {entry.st_mode}")
+                if not stat.S_ISDIR(entry.st_mode):  # Include only files
+                    files.append(entry)
+        except Exception as e:
+            self.log(f"Error listing files in {remote_directory}: {e}")
+            raise
+        return files
 
     def download_file(self, remote_file, local_file):
         try:
