@@ -4,8 +4,8 @@ import os
 from PyQt5.QtWidgets import (QApplication, QWidget, QPushButton, QLineEdit, QLabel,
                              QFileDialog, QMessageBox, QDialog, QFormLayout, QHBoxLayout,
                              QVBoxLayout, QGridLayout, QRadioButton, QComboBox, QPlainTextEdit, QCheckBox)
-from PyQt5.QtCore import QTimer
-from PyQt5.QtGui import QIcon  # Importa QIcon per gestire l'icona della finestra
+from PyQt5.QtCore import QTimer, Qt
+from PyQt5.QtGui import QIcon, QPalette, QColor, QPixmap
 from datetime import datetime
 import smtplib
 from email.mime.multipart import MIMEMultipart
@@ -75,9 +75,9 @@ class MainWindow(QWidget):
         super().__init__()
         MainWindow.open_windows.append(self)
         self.setWindowTitle("FTP Bizpal")
-        self.setWindowIcon(QIcon('logo.jpg'))  # Imposta l'icona della finestra con il logo personalizzato
+        self.setWindowIcon(QIcon('logo.jpg'))
         self.email_settings = {}
-        self.existing_files = set()  # This will hold the initial files in the directory
+        self.existing_files = set()
         self.initUI()
         self.setupTimer()
 
@@ -85,17 +85,22 @@ class MainWindow(QWidget):
         grid = QGridLayout()
         self.setLayout(grid)
 
+        # Status circle indicator
+        self.status_label = QLabel()
+        self.update_status_circle(False)
+        grid.addWidget(self.status_label, 0, 2)
+
         # Radio buttons for transfer type
         self.direction_group = QHBoxLayout()
         self.to_remote_button = QRadioButton("Local to Remote")
         self.to_remote_button.setChecked(True)
         self.to_local_button = QRadioButton("Remote to Local")
-        self.to_local_local_button = QRadioButton("Local to Local")  # New button for local to local
+        self.to_local_local_button = QRadioButton("Local to Local")
 
         self.direction_group.addWidget(self.to_remote_button)
         self.direction_group.addWidget(self.to_local_button)
-        self.direction_group.addWidget(self.to_local_local_button)  # Add new button to layout
-        grid.addLayout(self.direction_group, 0, 0, 1, 3)
+        self.direction_group.addWidget(self.to_local_local_button)
+        grid.addLayout(self.direction_group, 0, 0, 1, 2)
 
         # SFTP configuration inputs
         self.host_label = QLabel("SFTP Host:")
@@ -109,14 +114,14 @@ class MainWindow(QWidget):
         self.password_line_edit.setEchoMode(QLineEdit.Password)
 
         grid.addWidget(self.host_label, 1, 0)
-        grid.addWidget(self.host_line_edit, 1, 1, 1, 2)  # Spanning across two columns
+        grid.addWidget(self.host_line_edit, 1, 1)
         grid.addWidget(self.port_label, 2, 0)
-        grid.addWidget(self.port_line_edit, 2, 1, 1, 2)
+        grid.addWidget(self.port_line_edit, 2, 1)
 
         grid.addWidget(self.username_label, 3, 0)
-        grid.addWidget(self.username_line_edit, 3, 1, 1, 2)
+        grid.addWidget(self.username_line_edit, 3, 1)
         grid.addWidget(self.password_label, 4, 0)
-        grid.addWidget(self.password_line_edit, 4, 1, 1, 2)
+        grid.addWidget(self.password_line_edit, 4, 1)
 
         # Local and Remote Directory inputs
         self.local_dir_label = QLabel("Local Directory:")
@@ -132,7 +137,7 @@ class MainWindow(QWidget):
         grid.addWidget(self.local_dir_button, 5, 2)
 
         grid.addWidget(self.remote_dir_label, 6, 0)
-        grid.addWidget(self.remote_dir_line_edit, 6, 1, 1, 2)
+        grid.addWidget(self.remote_dir_line_edit, 6, 1)
 
         # Action buttons
         self.sync_button = QPushButton("Sync Now")
@@ -141,7 +146,7 @@ class MainWindow(QWidget):
         self.test_connection_button.clicked.connect(self.test_connection)
 
         grid.addWidget(self.sync_button, 7, 0)
-        grid.addWidget(self.test_connection_button, 7, 1, 1, 2)
+        grid.addWidget(self.test_connection_button, 7, 1)
 
         self.emailSettingsButton = QPushButton("Email Settings")
         self.emailSettingsButton.clicked.connect(self.openEmailSettingsDialog)
@@ -155,7 +160,6 @@ class MainWindow(QWidget):
         grid.addWidget(self.emailSettingsButton, 8, 0)
         grid.addWidget(self.newWindowButton, 8, 1)
         grid.addWidget(self.saveConfigButton, 8, 2)
-
         grid.addWidget(self.loadConfigButton, 9, 0)
 
         # Timer and log controls
@@ -187,7 +191,35 @@ class MainWindow(QWidget):
     def setupTimer(self):
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.sync_files)
-        self.timer.start(300000)  # Default to 5 minutes
+        self.timer.start(30000)  # Default to 30 seconds
+
+    def update_status_circle(self, active):
+        pixmap = QPixmap(20, 20)
+        color = QColor("green") if active else QColor("red")
+        pixmap.fill(color)
+        self.status_label.setPixmap(pixmap)
+
+    def sync_files(self):
+        self.update_status_circle(True)
+        self.append_log("Starting synchronization...")
+        direction = "to_remote" if self.to_remote_button.isChecked() else ("to_local" if self.to_local_button.isChecked() else "local_to_local")
+
+        try:
+            if direction == "local_to_local":
+                self.local_to_local_transfer()
+            else:
+                if self.transfer_new_files_only_checkbox.isChecked():
+                    self.sync_only_new_files(direction)
+                else:
+                    self.perform_sync(direction)
+        except Exception as e:
+            QMessageBox.critical(self, "Error", str(e))
+            self.append_log(f"Error: {e}")
+        finally:
+            self.update_status_circle(False)
+
+    # Resto delle funzioni
+
 
     def open_new_window(self):  # Aggiunta la funzione per aprire una nuova finestra
         new_window = MainWindow()
@@ -244,16 +276,26 @@ class MainWindow(QWidget):
 
     def perform_sync(self, direction):
         sftp_client = SftpClient(self.host_line_edit.text(), int(self.port_line_edit.text()),
-                                 self.username_line_edit.text(), self.password_line_edit.text(),
-                                 self.append_log)
+                             self.username_line_edit.text(), self.password_line_edit.text(),
+                             self.append_log)
         sftp_client.connect()
+    
+        files_transferred = []
+    
         if direction == "to_remote":
             files_transferred = sftp_client.upload_from_local_to_remote(self.local_dir_line_edit.text(),
                                                                         self.remote_dir_line_edit.text())
         else:
-            files_transferred = sftp_client.synchronize_and_clear_remote(self.remote_dir_line_edit.text(),
-                                                                         self.local_dir_line_edit.text())
+            remote_files = sftp_client.list_files(self.remote_dir_line_edit.text())  # La funzione ora restituisce solo file
+            
+            for remote_file in remote_files:
+                remote_file_path = os.path.join(self.remote_dir_line_edit.text(), remote_file.filename)
+                local_path = os.path.join(self.local_dir_line_edit.text(), remote_file.filename)
+                sftp_client.download_file(remote_file_path, local_path)
+                files_transferred.append(remote_file.filename)
+        
         sftp_client.close()
+        
         if files_transferred:
             self.append_log(f"Files transferred: {', '.join(files_transferred)}")
             self.send_email(files_transferred, direction)
@@ -261,6 +303,8 @@ class MainWindow(QWidget):
         if self.delete_after_transfer_checkbox.isChecked():
             for file in files_transferred:
                 self.append_log(f"Deleting file {file} from source directory.")
+
+
 
     def sync_only_new_files(self, direction):
         self.append_log("Transferring only new files added to the local directory...")
