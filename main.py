@@ -6,10 +6,11 @@ from PyQt5.QtWidgets import (QApplication, QWidget, QPushButton, QLineEdit, QLab
                              QVBoxLayout, QGridLayout, QRadioButton, QComboBox, QPlainTextEdit, QCheckBox)
 from PyQt5.QtCore import QTimer, Qt
 from PyQt5.QtGui import QIcon, QPalette, QColor, QPixmap
-from datetime import datetime
+from datetime import datetime, timedelta
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+import shutil
 
 from sftp_client import SftpClient
 
@@ -81,6 +82,8 @@ class MainWindow(QWidget):
         self.initUI()
         self.setupTimer()
 
+        self.setup_daily_report()
+
     def initUI(self):
         grid = QGridLayout()
         self.setLayout(grid)
@@ -92,10 +95,10 @@ class MainWindow(QWidget):
 
         # Radio buttons for transfer type
         self.direction_group = QHBoxLayout()
-        self.to_remote_button = QRadioButton("Local to Remote")
+        self.to_remote_button = QRadioButton("Locale a Remoto")
         self.to_remote_button.setChecked(True)
-        self.to_local_button = QRadioButton("Remote to Local")
-        self.to_local_local_button = QRadioButton("Local to Local")
+        self.to_local_button = QRadioButton("Remoto a Locale")
+        self.to_local_local_button = QRadioButton("Locale su Locale")
 
         self.direction_group.addWidget(self.to_remote_button)
         self.direction_group.addWidget(self.to_local_button)
@@ -124,12 +127,12 @@ class MainWindow(QWidget):
         grid.addWidget(self.password_line_edit, 4, 1)
 
         # Local and Remote Directory inputs
-        self.local_dir_label = QLabel("Local Directory:")
+        self.local_dir_label = QLabel("Cartella Locale:")
         self.local_dir_line_edit = QLineEdit()
-        self.local_dir_button = QPushButton("Choose...")
+        self.local_dir_button = QPushButton("Cerca")
         self.local_dir_button.clicked.connect(self.choose_local_directory)
 
-        self.remote_dir_label = QLabel("Remote Directory:")
+        self.remote_dir_label = QLabel("Cartella Remota:")
         self.remote_dir_line_edit = QLineEdit()
 
         grid.addWidget(self.local_dir_label, 5, 0)
@@ -150,11 +153,11 @@ class MainWindow(QWidget):
 
         self.emailSettingsButton = QPushButton("Email Settings")
         self.emailSettingsButton.clicked.connect(self.openEmailSettingsDialog)
-        self.newWindowButton = QPushButton("New Window")
+        self.newWindowButton = QPushButton("Nuova Finestra")
         self.newWindowButton.clicked.connect(self.open_new_window)
-        self.saveConfigButton = QPushButton("Save Configuration")
+        self.saveConfigButton = QPushButton("Salva Configurazione")
         self.saveConfigButton.clicked.connect(self.save_configuration)
-        self.loadConfigButton = QPushButton("Load Configuration")
+        self.loadConfigButton = QPushButton("Carica Configurazione")
         self.loadConfigButton.clicked.connect(self.load_configuration)
 
         grid.addWidget(self.emailSettingsButton, 8, 0)
@@ -163,14 +166,14 @@ class MainWindow(QWidget):
         grid.addWidget(self.loadConfigButton, 9, 0)
 
         # Timer and log controls
-        self.delete_after_transfer_checkbox = QCheckBox("Delete files after transfer")
-        self.transfer_new_files_only_checkbox = QCheckBox("Transfer only new files")
+        self.delete_after_transfer_checkbox = QCheckBox("Cancella il file una volta trasferito")
+        self.transfer_new_files_only_checkbox = QCheckBox("Trasferisci solo i file nuovi")
 
         self.timerLabel = QLabel("Timer Interval:")
         self.timerComboBox = QComboBox()
         self.timerComboBox.addItems([
-            "1 minute", "5 minutes", "10 minutes", "30 minutes", "1 hour", "2 hours",
-            "3 hours", "5 hours", "6 hours", "10 hours", "12 hours", "18 hours", "24 hours"
+            "1 minuto", "5 minuti", "10 minuti", "30 minuti", "1 ora", "2 ore",
+            "3 ore", "5 ore", "6 ore", "10 ore", "12 ore", "18 ore", "24 ore"
         ])
         self.timerComboBox.currentIndexChanged.connect(self.update_timer_interval)
 
@@ -179,7 +182,7 @@ class MainWindow(QWidget):
         grid.addWidget(self.delete_after_transfer_checkbox, 10, 0)
         grid.addWidget(self.transfer_new_files_only_checkbox, 10, 1)
 
-        self.clearLogButton = QPushButton("Clear Logs")
+        self.clearLogButton = QPushButton("Pulisci log")
         self.clearLogButton.clicked.connect(self.clear_logs)
 
         self.log_window = QPlainTextEdit()
@@ -234,19 +237,19 @@ class MainWindow(QWidget):
     def update_timer_interval(self):
         interval_text = self.timerComboBox.currentText()
         intervals = {
-            "1 minute": 60000,
-            "5 minutes": 300000,
-            "10 minutes": 600000,
-            "30 minutes": 1800000,
-            "1 hour": 3600000,
-            "2 hours": 7200000,
-            "3 hours": 10800000,
-            "5 hours": 18000000,
-            "6 hours": 21600000,
-            "10 hours": 36000000,
-            "12 hours": 43200000,
-            "18 hours": 64800000,
-            "24 hours": 86400000
+            "1 minuto": 60000,
+            "5 minuti": 300000,
+            "10 minuti": 600000,
+            "30 minuti": 1800000,
+            "1 ora": 3600000,
+            "2 ore": 7200000,
+            "3 ore": 10800000,
+            "5 ore": 18000000,
+            "6 ore": 21600000,
+            "10 ore": 36000000,
+            "12 ore": 43200000,
+            "18 ore": 64800000,
+            "24 ore": 86400000
         }
         self.timer.start(intervals[interval_text])
         self.append_log(f"Timer interval set to {interval_text}")
@@ -274,6 +277,96 @@ class MainWindow(QWidget):
             QMessageBox.critical(self, "Error", str(e))
             self.append_log(f"Error: {e}")
 
+    def send_email_with_logs(self, files_transferred, direction):
+        if not self.email_settings:
+            QMessageBox.warning(self, "Email Settings", "Please configure your email settings first.")
+            return
+        subject = "File Transfer Notification" if direction == "to_remote" else "File Download Notification"
+        body = f"The following files have been {'uploaded' if direction == 'to_remote' else 'downloaded'} successfully:\n\n" + "\n".join(files_transferred)
+
+        # Aggiungi log recenti alla email
+        recent_logs = self.get_recent_logs()
+        if recent_logs:
+            body += "\n\nRecent Logs:\n" + recent_logs
+
+        self._send_email(subject, body)
+
+    def get_recent_logs(self):
+        """Estrai le ultime righe dei log (es. ultime 20 righe)"""
+        log_text = self.log_window.toPlainText()
+        recent_logs = "\n".join(log_text.splitlines()[-20:])  # Ultime 20 righe
+        return recent_logs
+
+    def _send_email(self, subject, body):
+        msg = MIMEMultipart()
+        msg['From'] = self.email_settings.get("username")
+        msg['To'] = self.email_settings.get("recipient")
+        msg['Subject'] = subject
+        msg.attach(MIMEText(body, 'plain'))
+        try:
+            server = smtplib.SMTP(self.email_settings.get("server"), self.email_settings.get("port"))
+            server.starttls()
+            server.login(self.email_settings.get("username"), self.email_settings.get("password"))
+            server.sendmail(msg['From'], msg['To'], msg.as_string())
+            server.quit()
+            self.append_log("Email sent successfully")
+        except Exception as e:
+            self.append_log(f"Failed to send email: {e}")
+
+    # Aggiungi la configurazione per il report giornaliero
+    def setup_daily_report(self):
+        """Imposta l'invio del report delle ultime 24 ore alle 7:30 e 15:00."""
+        now = datetime.now()
+        next_7_30 = now.replace(hour=7, minute=30, second=0, microsecond=0)
+        next_15_00 = now.replace(hour=15, minute=0, second=0, microsecond=0)
+
+        if now >= next_7_30:
+            next_7_30 += timedelta(days=1)
+        if now >= next_15_00:
+            next_15_00 += timedelta(days=1)
+
+        # Timer per le 7:30
+        self.timer_7_30 = QTimer(self)
+        self.timer_7_30.timeout.connect(lambda: self.send_daily_log_report())
+        self.timer_7_30.start(int((next_7_30 - now).total_seconds() * 1000))  # Conversione a intero
+
+        # Timer per le 15:00
+        self.timer_15_00 = QTimer(self)
+        self.timer_15_00.timeout.connect(lambda: self.send_daily_log_report())
+        self.timer_15_00.start(int((next_15_00 - now).total_seconds() * 1000))  # Conversione a intero
+
+    def send_daily_log_report(self):
+        """Invia il report giornaliero delle ultime 24 ore."""
+        subject = "Daily Log Report"
+        body = "Here are the logs for the last 24 hours:\n\n"
+
+        # Estrai i log delle ultime 24 ore
+        body += self.get_logs_last_24_hours()
+
+        self._send_email(subject, body)
+
+    def get_logs_last_24_hours(self):
+        """Recupera i log delle ultime 24 ore dalla finestra log."""
+        log_text = self.log_window.toPlainText()
+        logs = log_text.splitlines()
+        last_24_hours_logs = []
+        now = datetime.now()
+
+        for log in reversed(logs):
+            try:
+                log_time_str = log[1:9]  # Formato [HH:MM:SS]
+                log_time = datetime.strptime(log_time_str, "%H:%M:%S").replace(
+                    year=now.year, month=now.month, day=now.day
+                )
+                if log_time < now - timedelta(days=1):
+                    break
+                last_24_hours_logs.append(log)
+            except ValueError:
+                continue
+
+        return "\n".join(reversed(last_24_hours_logs))
+
+    # Modifica nella funzione perform_sync per usare la funzione aggiornata
     def perform_sync(self, direction):
         sftp_client = SftpClient(self.host_line_edit.text(), int(self.port_line_edit.text()),
                              self.username_line_edit.text(), self.password_line_edit.text(),
@@ -298,8 +391,8 @@ class MainWindow(QWidget):
         
         if files_transferred:
             self.append_log(f"Files transferred: {', '.join(files_transferred)}")
-            self.send_email(files_transferred, direction)
-        
+            self.send_email_with_logs(files_transferred, direction)  # Usa la nuova funzione
+
         if self.delete_after_transfer_checkbox.isChecked():
             for file in files_transferred:
                 self.append_log(f"Deleting file {file} from source directory.")
@@ -323,19 +416,39 @@ class MainWindow(QWidget):
         try:
             src_dir = self.local_dir_line_edit.text()
             dest_dir = self.remote_dir_line_edit.text()
+            
+            # Verifica che le directory di origine e destinazione siano valide
+            if not os.path.isdir(src_dir) or not os.path.isdir(dest_dir):
+                self.append_log("Errore: directory di origine o destinazione non valida.")
+                return
+            
             self.append_log(f"Transferring files from {src_dir} to {dest_dir}...")
 
-            files_transferred = os.listdir(src_dir)  # Transferring all files from src to dest
+            files_transferred = []  # Lista per tenere traccia dei file trasferiti
+
+            for file in os.listdir(src_dir):
+                src_file = os.path.join(src_dir, file)
+                dest_file = os.path.join(dest_dir, file)
+                
+                # Solo i file vengono trasferiti
+                if os.path.isfile(src_file):
+                    # Copia il file nella directory di destinazione
+                    shutil.copy2(src_file, dest_file)
+                    files_transferred.append(file)
+
             self.append_log(f"Files transferred: {', '.join(files_transferred)}")
 
+            # Cancella i file dalla directory di origine solo se il trasferimento è completo
             if self.delete_after_transfer_checkbox.isChecked():
                 for file in files_transferred:
-                    os.remove(os.path.join(src_dir, file))
-                    self.append_log(f"Deleting file {file} from {src_dir}")
+                    src_file = os.path.join(src_dir, file)
+                    os.remove(src_file)
+                    self.append_log(f"Deleted file {file} from {src_dir}")
 
             self.append_log("Local to local transfer complete.")
         except Exception as e:
             self.append_log(f"Error during local to local transfer: {e}")
+
 
     def test_connection(self):
         try:
