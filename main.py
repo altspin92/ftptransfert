@@ -428,45 +428,50 @@ class MainWindow(QWidget):
 
         try:
             if direction == "to_remote":
-                files_transferred = sftp_client.upload_from_local_to_remote(
-                    self.local_dir_line_edit.text(),
-                    self.remote_dir_line_edit.text()
-                )
-            elif direction == "to_local":
+                # Elenco dei file locali
+                local_files = os.listdir(self.local_dir_line_edit.text())
+                for file_name in local_files:
+                    # Ignora file indesiderati
+                    if file_name.startswith('.') or not file_name.strip():
+                        self.append_log(f"Skipping hidden or invalid file: {file_name}")
+                        continue
+
+                    local_file_path = os.path.join(self.local_dir_line_edit.text(), file_name)
+                    remote_file_path = os.path.join(self.remote_dir_line_edit.text(), file_name)
+
+                    try:
+                        sftp_client.upload_file(local_file_path, remote_file_path)
+                        files_transferred.append(file_name)
+                        self.append_log(f"Uploaded file: {local_file_path} to {remote_file_path}")
+                    except Exception as e:
+                        self.append_log(f"Failed to upload file {local_file_path}: {e}")
+            else:  # Per "to_local"
                 remote_files = sftp_client.list_files(self.remote_dir_line_edit.text())
                 for remote_file in remote_files:
-                    remote_file_name = getattr(remote_file, 'filename', remote_file)
+                    remote_file_name = getattr(remote_file, 'filename', None)
+                    if not remote_file_name or remote_file_name.startswith('.'):
+                        self.append_log(f"Skipping invalid or hidden file: {remote_file}")
+                        continue
+
                     remote_file_path = os.path.join(self.remote_dir_line_edit.text(), remote_file_name)
                     local_path = os.path.join(self.local_dir_line_edit.text(), remote_file_name)
-                    sftp_client.download_file(remote_file_path, local_path)
-                    files_transferred.append(remote_file_name)
 
-            if files_transferred:
-                self.append_log(f"Files transferred: {', '.join(files_transferred)}")
-                self.send_email_with_logs(files_transferred, direction)
-            else:
-                self.append_log("No files were transferred.")
-                self.send_email_with_logs([], direction)
+                    try:
+                        sftp_client.download_file(remote_file_path, local_path)
+                        files_transferred.append(remote_file_name)
+                        self.append_log(f"Downloaded file: {remote_file_path} to {local_path}")
+                    except Exception as e:
+                        self.append_log(f"Failed to download file {remote_file_path}: {e}")
 
-            for remote_file in remote_files:
-                remote_file_name = getattr(remote_file, 'filename', None)
-                if not remote_file_name:
-                    self.append_log(f"Skipping invalid entry: {remote_file}")
-                    continue
-                remote_file_path = os.path.join(self.remote_dir_line_edit.text(), remote_file_name)
-                local_path = os.path.join(self.local_dir_line_edit.text(), remote_file_name)
-                try:
-                    sftp_client.download_file(remote_file_path, local_path)
-                    files_transferred.append(remote_file_name)
-                    self.append_log(f"Downloaded file: {remote_file_path} to {local_path}")
-                except FileNotFoundError as e:
-                    self.append_log(f"Failed to download file {remote_file_path}: {e}")
-
+            # Invio email alla fine del trasferimento
+            self.send_email_with_logs(files_transferred, direction)
 
         except Exception as e:
-            self.append_log(f"Error during file transfer: {e}")
+            self.append_log(f"Error during sync: {e}")
+
         finally:
             sftp_client.close()
+
 
 
     def filter_files(files):
