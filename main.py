@@ -5,7 +5,7 @@ from PyQt5.QtWidgets import (QApplication, QWidget, QPushButton, QLineEdit, QLab
                              QFileDialog, QMessageBox, QDialog, QFormLayout, QHBoxLayout,
                              QVBoxLayout, QGridLayout, QRadioButton, QComboBox, QPlainTextEdit, QCheckBox)
 from PyQt5.QtCore import QTimer, Qt
-from PyQt5.QtGui import QIcon, QPalette, QColor, QPixmap
+from PyQt5.QtGui import QIcon, QPalette, QColor, QPixmap, QPainter, QBrush
 from datetime import datetime, timedelta
 import smtplib
 from email.mime.multipart import MIMEMultipart
@@ -76,10 +76,11 @@ class MainWindow(QWidget):
         super().__init__()
         MainWindow.open_windows.append(self)
         self.setWindowTitle("FTP Bizpal")
-        self.setWindowIcon(QIcon('logo.jpg'))
+        self.setWindowIcon(QIcon('logo.jpeg'))
         self.email_settings = {}
         self.existing_files = set()
         self.initUI()
+        self.update_status_circle(False)
         self.setupTimer()
 
         self.setup_daily_report()
@@ -197,10 +198,34 @@ class MainWindow(QWidget):
         self.timer.start(30000)  # Default to 30 seconds
 
     def update_status_circle(self, active):
-        pixmap = QPixmap(20, 20)
-        color = QColor("green") if active else QColor("red")
-        pixmap.fill(color)
+        print(f"Updating status circle to: {'green' if active else 'red'}")
+        pixmap = QPixmap(20, 20)  # Crea un pixmap di dimensioni 20x20
+        pixmap.fill(Qt.transparent)  # Rende il background trasparente
+        painter = QPainter(pixmap)
+        painter.setBrush(QColor("green") if active else QColor("red"))
+        painter.setPen(Qt.NoPen)  # Rimuove il bordo
+        painter.drawEllipse(0, 0, 20, 20)  # Disegna un cerchio
+        painter.end()
         self.status_label.setPixmap(pixmap)
+        self.status_label.repaint()
+
+    #metodo di racoglimento log ultime 24 ore
+    def get_recent_logs(self):
+        """Ritorna i log delle ultime 24 ore."""
+        logs = self.log_window.toPlainText().split("\n")
+        recent_logs = []
+        now = datetime.now()
+        for log in logs:
+            if log.startswith("["):
+                try:
+                    log_time = datetime.strptime(log[1:9], "%H:%M:%S")
+                    if (now - log_time).total_seconds() <= 86400:  # Ultime 24 ore
+                        recent_logs.append(log)
+                except ValueError:
+                    continue
+        return recent_logs
+
+
 
     def sync_files(self):
         self.update_status_circle(True)
@@ -215,6 +240,12 @@ class MainWindow(QWidget):
                     self.sync_only_new_files(direction)
                 else:
                     self.perform_sync(direction)
+
+            # Invia email al termine del trasferimento
+            subject = f"File Transfer Completed ({direction})"
+            body = "The file transfer has been successfully completed.\n\nLogs:\n" + self.log_window.toPlainText()
+            self.send_email(subject, body)
+
         except Exception as e:
             QMessageBox.critical(self, "Error", str(e))
             self.append_log(f"Error: {e}")
@@ -263,6 +294,8 @@ class MainWindow(QWidget):
 
     def sync_files(self):
         self.append_log("Starting synchronization...")
+        self.update_status_circle(True)
+        QApplication.processEvents ()
         direction = "to_remote" if self.to_remote_button.isChecked() else ("to_local" if self.to_local_button.isChecked() else "local_to_local")
 
         try:
@@ -276,6 +309,8 @@ class MainWindow(QWidget):
         except Exception as e:
             QMessageBox.critical(self, "Error", str(e))
             self.append_log(f"Error: {e}")
+        finally:
+            self.update_status_circle(False)
 
     def send_email_with_logs(self, files_transferred, direction):
         if not self.email_settings:
@@ -298,20 +333,32 @@ class MainWindow(QWidget):
         return recent_logs
 
     def _send_email(self, subject, body):
+        if not self.email_settings:
+            self.append_log("Email not configured.")
+            return
+
+        # Converti il corpo in stringa se è una lista
+        if isinstance(body, list):
+            body = "\n".join(body)
+
         msg = MIMEMultipart()
-        msg['From'] = self.email_settings.get("username")
-        msg['To'] = self.email_settings.get("recipient")
+        msg['From'] = self.email_settings.get('username')
+        msg['To'] = self.email_settings.get('recipient')
         msg['Subject'] = subject
         msg.attach(MIMEText(body, 'plain'))
+
         try:
-            server = smtplib.SMTP(self.email_settings.get("server"), self.email_settings.get("port"))
+            server = smtplib.SMTP(self.email_settings.get('server'), int(self.email_settings.get('port')))
             server.starttls()
-            server.login(self.email_settings.get("username"), self.email_settings.get("password"))
+            server.login(self.email_settings.get('username'), self.email_settings.get('password'))
             server.sendmail(msg['From'], msg['To'], msg.as_string())
             server.quit()
-            self.append_log("Email sent successfully")
+            self.append_log("Email sent successfully.")
         except Exception as e:
             self.append_log(f"Failed to send email: {e}")
+
+
+
 
     # Aggiungi la configurazione per il report giornaliero
     def setup_daily_report(self):
@@ -368,49 +415,144 @@ class MainWindow(QWidget):
 
     # Modifica nella funzione perform_sync per usare la funzione aggiornata
     def perform_sync(self, direction):
-        sftp_client = SftpClient(self.host_line_edit.text(), int(self.port_line_edit.text()),
-                             self.username_line_edit.text(), self.password_line_edit.text(),
-                             self.append_log)
+        sftp_client = SftpClient(
+            self.host_line_edit.text(),
+            int(self.port_line_edit.text()),
+            self.username_line_edit.text(),
+            self.password_line_edit.text(),
+            self.append_log
+        )
         sftp_client.connect()
-    
+
         files_transferred = []
-    
-        if direction == "to_remote":
-            files_transferred = sftp_client.upload_from_local_to_remote(self.local_dir_line_edit.text(),
-                                                                        self.remote_dir_line_edit.text())
-        else:
-            remote_files = sftp_client.list_files(self.remote_dir_line_edit.text())  # La funzione ora restituisce solo file
-            
+
+        try:
+            if direction == "to_remote":
+                files_transferred = sftp_client.upload_from_local_to_remote(
+                    self.local_dir_line_edit.text(),
+                    self.remote_dir_line_edit.text()
+                )
+            elif direction == "to_local":
+                remote_files = sftp_client.list_files(self.remote_dir_line_edit.text())
+                for remote_file in remote_files:
+                    remote_file_name = getattr(remote_file, 'filename', remote_file)
+                    remote_file_path = os.path.join(self.remote_dir_line_edit.text(), remote_file_name)
+                    local_path = os.path.join(self.local_dir_line_edit.text(), remote_file_name)
+                    sftp_client.download_file(remote_file_path, local_path)
+                    files_transferred.append(remote_file_name)
+
+            if files_transferred:
+                self.append_log(f"Files transferred: {', '.join(files_transferred)}")
+                self.send_email_with_logs(files_transferred, direction)
+            else:
+                self.append_log("No files were transferred.")
+                self.send_email_with_logs([], direction)
+
             for remote_file in remote_files:
-                remote_file_path = os.path.join(self.remote_dir_line_edit.text(), remote_file.filename)
-                local_path = os.path.join(self.local_dir_line_edit.text(), remote_file.filename)
-                sftp_client.download_file(remote_file_path, local_path)
-                files_transferred.append(remote_file.filename)
-        
-        sftp_client.close()
-        
-        if files_transferred:
-            self.append_log(f"Files transferred: {', '.join(files_transferred)}")
-            self.send_email_with_logs(files_transferred, direction)  # Usa la nuova funzione
+                remote_file_name = getattr(remote_file, 'filename', None)
+                if not remote_file_name:
+                    self.append_log(f"Skipping invalid entry: {remote_file}")
+                    continue
+                remote_file_path = os.path.join(self.remote_dir_line_edit.text(), remote_file_name)
+                local_path = os.path.join(self.local_dir_line_edit.text(), remote_file_name)
+                try:
+                    sftp_client.download_file(remote_file_path, local_path)
+                    files_transferred.append(remote_file_name)
+                    self.append_log(f"Downloaded file: {remote_file_path} to {local_path}")
+                except FileNotFoundError as e:
+                    self.append_log(f"Failed to download file {remote_file_path}: {e}")
 
-        if self.delete_after_transfer_checkbox.isChecked():
-            for file in files_transferred:
-                self.append_log(f"Deleting file {file} from source directory.")
 
+        except Exception as e:
+            self.append_log(f"Error during file transfer: {e}")
+        finally:
+            sftp_client.close()
+
+
+    def filter_files(files):
+        """Filtro per ignorare file nascosti."""
+        return [file for file in files if not file.startswith('.')]
 
 
     def sync_only_new_files(self, direction):
-        self.append_log("Transferring only new files added to the local directory...")
+
+        self.append_log("Checking for new files...")
         src_dir = self.local_dir_line_edit.text()
         current_files = set(os.listdir(src_dir))
         new_files = current_files - self.existing_files
         if new_files:
             self.append_log(f"New files detected: {', '.join(new_files)}")
-            if direction == "to_remote":
-                self.perform_sync(direction)
+            self.perform_sync(direction)
         else:
             self.append_log("No new files found to transfer.")
+            self._send_email([], direction)  # Notify even if no files are transferred
         self.existing_files = current_files
+        self.append_log("Transferring only new files added to the local directory...")
+        src_dir = self.local_dir_line_edit.text()
+
+        # Percorso per salvare i file già trasferiti
+        transferred_files_path = "transferred_files.json"
+
+        # Carica i file già trasferiti
+        if os.path.exists(transferred_files_path):
+            with open(transferred_files_path, 'r') as file:
+                transferred_files = set(json.load(file))
+        else:
+            transferred_files = set()
+
+        # Elenco dei file attualmente nella directory
+        current_files = set(os.listdir(src_dir))
+        new_files = current_files - transferred_files
+
+        files_transferred = []
+        try:
+            if new_files:
+                self.append_log(f"New files detected: {', '.join(new_files)}")
+                sftp_client = SftpClient(
+                    self.host_line_edit.text(), int(self.port_line_edit.text()),
+                    self.username_line_edit.text(), self.password_line_edit.text(),
+                    self.append_log
+                )
+                sftp_client.connect()
+
+                if direction == "to_remote":
+                    for file in new_files:
+                        local_path = os.path.join(src_dir, file)
+                        remote_path = os.path.join(self.remote_dir_line_edit.text(), file)
+                        sftp_client.upload_file(local_path, remote_path)
+                        files_transferred.append(file)
+                elif direction == "to_local":
+                    for file in new_files:
+                        remote_path = os.path.join(self.remote_dir_line_edit.text(), file)
+                        local_path = os.path.join(src_dir, file)
+                        sftp_client.download_file(remote_path, local_path)
+                        files_transferred.append(file)
+
+                sftp_client.close()
+                self.append_log(f"New files transferred: {', '.join(files_transferred)}")
+            else:
+                self.append_log("No new files found to transfer.")
+
+
+            # Invia una mail sempre
+            subject = "File Transfer Notification"
+            if files_transferred:
+                body = (
+                    f"The following new files have been {'uploaded' if direction == 'to_remote' else 'downloaded'}:\n"
+                    + "\n".join(files_transferred)
+                )
+            else:
+                body = "No new files were transferred during the sync process."
+
+            recent_logs = self.get_recent_logs()
+            body += "\n\nRecent Logs:\n" + "\n".join(recent_logs)
+
+            self._send_email(subject, body)
+        except Exception as e:
+            self.append_log(f"Error during transfer of new files: {e}")
+
+
+
 
     def local_to_local_transfer(self):
         try:
@@ -464,26 +606,27 @@ class MainWindow(QWidget):
             QMessageBox.critical(self, "Error", f"Connection failed: {e}")
             self.append_log(f"Connection failed: {e}")
 
-    def send_email(self, files_transferred, direction):
+    def send_email(self, subject, body):
         if not self.email_settings:
-            QMessageBox.warning(self, "Email Settings", "Please configure your email settings first.")
+            self.append_log("Email settings are not configured. Please set them up.")
             return
-        subject = "File Upload Notification" if direction == "to_remote" else "File Download Notification"
-        body = f"The following files have been {'uploaded' if direction == 'to_remote' else 'downloaded'} successfully:\n\n" + "\n".join(files_transferred)
+
         msg = MIMEMultipart()
         msg['From'] = self.email_settings.get("username")
         msg['To'] = self.email_settings.get("recipient")
         msg['Subject'] = subject
         msg.attach(MIMEText(body, 'plain'))
+
         try:
-            server = smtplib.SMTP(self.email_settings.get("server"), self.email_settings.get("port"))
+            server = smtplib.SMTP(self.email_settings.get("server"), int(self.email_settings.get("port")))
             server.starttls()
             server.login(self.email_settings.get("username"), self.email_settings.get("password"))
             server.sendmail(msg['From'], msg['To'], msg.as_string())
             server.quit()
-            self.append_log("Email sent successfully")
+            self.append_log("Email sent successfully.")
         except Exception as e:
             self.append_log(f"Failed to send email: {e}")
+
 
     def clear_logs(self):
         self.log_window.clear()
@@ -540,3 +683,22 @@ if __name__ == "__main__":
     mainWin = MainWindow()
     mainWin.show()
     sys.exit(app.exec_())
+
+
+def _send_email(subject, body, email_settings):
+    """Invia un'email utilizzando le impostazioni fornite."""
+    msg = MIMEMultipart()
+    msg['From'] = email_settings['username']
+    msg['To'] = email_settings['recipient']
+    msg['Subject'] = subject
+    msg.attach(MIMEText(body, 'plain'))
+
+    try:
+        server = smtplib.SMTP(email_settings['server'], int(email_settings['port']))
+        server.starttls()
+        server.login(email_settings['username'], email_settings['password'])
+        server.sendmail(msg['From'], msg['To'], msg.as_string())
+        server.quit()
+        print("[LOG] Email inviata correttamente.")
+    except Exception as e:
+        print(f"[ERRORE] Invio email fallito: {e}")
