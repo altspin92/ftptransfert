@@ -45,6 +45,8 @@ class SftpClient:
             self.log(f"Error during file upload: {e}")
             raise
         return files_transferred
+    
+
 
     def synchronize_and_clear_remote(self, remote_dir, local_dir):
         files_transferred = []
