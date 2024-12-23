@@ -83,7 +83,15 @@ class MainWindow(QWidget):
         self.update_status_circle(False)
         self.setupTimer()
 
+        
+
         self.setup_daily_report()
+        #aggiunta nome processo
+
+    def update_window_title(self):
+        process_name = self.process_name_line_edit.text().strip()
+        self.setWindowTitle(f"FTP Bizpal - {process_name}" if process_name else "FTP Bizpal")
+
 
     def initUI(self):
         grid = QGridLayout()
@@ -431,7 +439,6 @@ class MainWindow(QWidget):
                 # Elenco dei file locali
                 local_files = os.listdir(self.local_dir_line_edit.text())
                 for file_name in local_files:
-                    # Ignora file indesiderati
                     if file_name.startswith('.') or not file_name.strip():
                         self.append_log(f"Skipping hidden or invalid file: {file_name}")
                         continue
@@ -443,8 +450,14 @@ class MainWindow(QWidget):
                         sftp_client.upload_file(local_file_path, remote_file_path)
                         files_transferred.append(file_name)
                         self.append_log(f"Uploaded file: {local_file_path} to {remote_file_path}")
+
+                        # Cancella il file locale dopo il trasferimento, se l'opzione è abilitata
+                        if self.delete_after_transfer_checkbox.isChecked():
+                            os.remove(local_file_path)
+                            self.append_log(f"Deleted file {local_file_path} after upload.")
                     except Exception as e:
                         self.append_log(f"Failed to upload file {local_file_path}: {e}")
+
             else:  # Per "to_local"
                 remote_files = sftp_client.list_files(self.remote_dir_line_edit.text())
                 for remote_file in remote_files:
@@ -460,6 +473,11 @@ class MainWindow(QWidget):
                         sftp_client.download_file(remote_file_path, local_path)
                         files_transferred.append(remote_file_name)
                         self.append_log(f"Downloaded file: {remote_file_path} to {local_path}")
+
+                        # Cancella il file remoto dopo il trasferimento, se l'opzione è abilitata
+                        if self.delete_after_transfer_checkbox.isChecked():
+                            sftp_client.delete_file(remote_file_path)
+                            self.append_log(f"Deleted file {remote_file_path} after download.")
                     except Exception as e:
                         self.append_log(f"Failed to download file {remote_file_path}: {e}")
 
@@ -473,27 +491,25 @@ class MainWindow(QWidget):
             sftp_client.close()
 
 
-
     def filter_files(files):
         """Filtro per ignorare file nascosti."""
         return [file for file in files if not file.startswith('.')]
 
 
     def sync_only_new_files(self, direction):
-
-        self.append_log("Checking for new files...")
-        src_dir = self.local_dir_line_edit.text()
-        current_files = set(os.listdir(src_dir))
-        new_files = current_files - self.existing_files
-        if new_files:
-            self.append_log(f"New files detected: {', '.join(new_files)}")
-            self.perform_sync(direction)
-        else:
-            self.append_log("No new files found to transfer.")
-            self._send_email([], direction)  # Notify even if no files are transferred
-        self.existing_files = current_files
         self.append_log("Transferring only new files added to the local directory...")
         src_dir = self.local_dir_line_edit.text()
+        current_files = {f for f in os.listdir(src_dir) if not f.startswith('.') and f.strip()}
+        new_files = current_files - self.existing_files
+
+        if new_files:
+            self.append_log(f"New files detected: {', '.join(new_files)}")
+            if direction == "to_remote":
+                self.perform_sync(direction)
+        else:
+            self.append_log("No new files found to transfer.")
+        self.existing_files = current_files
+
 
         # Percorso per salvare i file già trasferiti
         transferred_files_path = "transferred_files.json"
@@ -595,6 +611,15 @@ class MainWindow(QWidget):
             self.append_log("Local to local transfer complete.")
         except Exception as e:
             self.append_log(f"Error during local to local transfer: {e}")
+
+            if self.delete_after_transfer_checkbox.isChecked():
+                for file in files_transferred:
+                    try:
+                        os.remove(os.path.join(self.local_dir_line_edit.text(), file))
+                        self.append_log(f"Deleted file: {file}")
+                    except Exception as e:
+                        self.append_log(f"Failed to delete file {file}: {e}")
+
 
 
     def test_connection(self):
