@@ -14,6 +14,18 @@ import shutil
 
 from sftp_client import SftpClient
 
+TRANSFER_LOG_FILE = "transfer_log.json"
+
+def load_transfer_log():
+    if os.path.exists(TRANSFER_LOG_FILE):
+        with open(TRANSFER_LOG_FILE, "r") as file:
+            return json.load(file)
+    return {}
+
+def save_transfer_log(log):
+    with open(TRANSFER_LOG_FILE, "w") as file:
+        json.dump(log, file, indent=4)
+
 class EmailSettingsDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -236,29 +248,50 @@ class MainWindow(QWidget):
 
 
     def sync_files(self):
-        self.update_status_circle(True)
         self.append_log("Starting synchronization...")
-        direction = "to_remote" if self.to_remote_button.isChecked() else ("to_local" if self.to_local_button.isChecked() else "local_to_local")
+        direction = "to_remote" if self.to_remote_button.isChecked() else "to_local"
+        transfer_log = load_transfer_log()
 
         try:
-            if direction == "local_to_local":
-                self.local_to_local_transfer()
-            else:
-                if self.transfer_new_files_only_checkbox.isChecked():
-                    self.sync_only_new_files(direction)
-                else:
-                    self.perform_sync(direction)
+            sftp_client = SftpClient(
+                self.host_line_edit.text(),
+                int(self.port_line_edit.text()),
+                self.username_line_edit.text(),
+                self.password_line_edit.text(),
+                self.append_log,
+            )
+            sftp_client.connect()
 
-            # Invia email al termine del trasferimento
-            subject = f"File Transfer Completed ({direction})"
-            body = "The file transfer has been successfully completed.\n\nLogs:\n" + self.log_window.toPlainText()
-            self.send_email(subject, body)
+            if direction == "to_remote":
+                files_to_transfer = [
+                    f for f in os.listdir(self.local_dir_line_edit.text())
+                    if f not in transfer_log.get("to_remote", [])
+                ]
+                for file in files_to_transfer:
+                    sftp_client.upload_from_local_to_remote(
+                        os.path.join(self.local_dir_line_edit.text(), file),
+                        os.path.join(self.remote_dir_line_edit.text(), file),
+                    )
+                    transfer_log.setdefault("to_remote", []).append(file)
+            else:  # to_local
+                remote_files = sftp_client.list_files(self.remote_dir_line_edit.text())
+                files_to_transfer = [
+                    f.filename for f in remote_files
+                    if f.filename not in transfer_log.get("to_local", [])
+                ]
+                for file in files_to_transfer:
+                    sftp_client.download_file(
+                        os.path.join(self.remote_dir_line_edit.text(), file),
+                        os.path.join(self.local_dir_line_edit.text(), file),
+                    )
+                    transfer_log.setdefault("to_local", []).append(file)
+
+            save_transfer_log(transfer_log)
+            sftp_client.close()
 
         except Exception as e:
-            QMessageBox.critical(self, "Error", str(e))
             self.append_log(f"Error: {e}")
-        finally:
-            self.update_status_circle(False)
+
 
     # Resto delle funzioni
 
@@ -303,20 +336,80 @@ class MainWindow(QWidget):
     def sync_files(self):
         self.append_log("Starting synchronization...")
         self.update_status_circle(True)
-        QApplication.processEvents ()
+        QApplication.processEvents()
         direction = "to_remote" if self.to_remote_button.isChecked() else ("to_local" if self.to_local_button.isChecked() else "local_to_local")
+        transfer_log = load_transfer_log()
 
         try:
             if direction == "local_to_local":
                 self.local_to_local_transfer()
             else:
-                if self.transfer_new_files_only_checkbox.isChecked():
-                    self.sync_only_new_files(direction)
+                sftp_client = SftpClient(
+                    self.host_line_edit.text(),
+                    int(self.port_line_edit.text()),
+                    self.username_line_edit.text(),
+                    self.password_line_edit.text(),
+                    self.append_log,
+                )
+                sftp_client.connect()
+
+                files_transferred = []
+
+                if direction == "to_remote":
+                    local_files = os.listdir(self.local_dir_line_edit.text())
+                    for file_name in local_files:
+                        if file_name in transfer_log.get("to_remote", []):
+                            self.append_log(f"File already transferred: {file_name}")
+                            continue
+
+                        local_file_path = os.path.join(self.local_dir_line_edit.text(), file_name)
+                        remote_file_path = os.path.join(self.remote_dir_line_edit.text(), file_name)
+
+                        try:
+                            sftp_client.upload_file(local_file_path, remote_file_path)
+                            transfer_log.setdefault("to_remote", []).append(file_name)
+                            save_transfer_log(transfer_log)
+                            files_transferred.append(file_name)
+                            self.append_log(f"Uploaded file: {local_file_path} to {remote_file_path}")
+
+                            if self.delete_after_transfer_checkbox.isChecked():
+                                os.remove(local_file_path)
+                                self.append_log(f"Deleted file {local_file_path} after upload.")
+                        except Exception as e:
+                            self.append_log(f"Failed to upload {file_name}: {e}")
+                elif direction == "to_local":
+                            remote_files = sftp_client.list_files(self.remote_dir_line_edit.text())
+                for file_attr in remote_files:
+                    file_name = file_attr.filename
+                    if file_name in transfer_log.get("to_local", []):
+                        self.append_log(f"File already transferred: {file_name}")
+                        continue
+
+                    remote_file_path = os.path.join(self.remote_dir_line_edit.text(), file_name)
+                    local_file_path = os.path.join(self.local_dir_line_edit.text(), file_name)
+
+                    try:
+                        sftp_client.download_file(remote_file_path, local_file_path)
+                        transfer_log.setdefault("to_local", []).append(file_name)
+                        save_transfer_log(transfer_log)
+                        files_transferred.append(file_name)
+                        self.append_log(f"Downloaded file: {remote_file_path} to {local_file_path}")
+
+                        if self.delete_after_transfer_checkbox.isChecked():
+                            sftp_client.remove_file(remote_file_path)
+                            self.append_log(f"Deleted remote file {remote_file_path} after download.")
+                    except Exception as e:
+                        self.append_log(f"Failed to download {file_name}: {e}")
+
+                sftp_client.close()
+                # Invia email con i file trasferiti
+                if files_transferred:
+                    self.send_email_with_logs(files_transferred, direction)
                 else:
-                    self.perform_sync(direction)
+                    self.append_log("No new files were transferred.")
+
         except Exception as e:
-            QMessageBox.critical(self, "Error", str(e))
-            self.append_log(f"Error: {e}")
+            self.append_log(f"Error during synchronization: {e}")
         finally:
             self.update_status_circle(False)
 
