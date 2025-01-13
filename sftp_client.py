@@ -29,42 +29,55 @@ class SftpClient:
             self.log(f"Exception in connecting to the server: {e}")
             raise
 
-    def upload_from_local_to_remote(self, local_dir, remote_dir):
-        files_transferred = []
+    def upload_from_local_to_remote(self, local_path, remote_path):
+        if not os.path.exists(local_path):
+            raise FileNotFoundError(f"Local file {local_path} does not exist.")
+
+        self.append_log(f"Uploading {local_path} to {remote_path}")
         try:
-            self.log(f"Starting upload from {local_dir} to {remote_dir}")
-            for file in os.listdir(local_dir):
-                local_file = os.path.join(local_dir, file)
-                remote_file = os.path.join(remote_dir, file.replace("\\", "/"))
-                if os.path.isfile(local_file):  # Ensure only files are uploaded
-                    self.upload_file(local_file, remote_file)
-                    files_transferred.append(file)
-                    os.remove(local_file)  # Delete the local file after successful upload
-            self.log("File upload complete.")
+            self.sftp.put(local_path, remote_path)
+            self.append_log(f"Uploaded file: {local_path} to {remote_path}")
         except Exception as e:
-            self.log(f"Error during file upload: {e}")
-            raise
-        return files_transferred
+            self.append_log(f"Failed to upload file {local_path}: {e}")
+            raise e
+
     
+    #def delete_remote_file(self, remote_path):
+    #    try:
+    #        self.sftp.remove(remote_path)
+    #        self.log(f"Deleted remote file: {remote_path}")
+    #    except Exception as e:
+    #        self.log(f"Failed to delete remote file: {remote_path}. Error: {e}")
+    #        raise
+    def remove_file(self, remote_file):
+        try:
+            self.log(f"Deleting remote file: {remote_file}")
+            self.sftp.remove(remote_file)
+            self.log(f"Deleted remote file: {remote_file}")
+        except Exception as e:
+            self.log(f"Failed to delete remote file {remote_file}: {e}")
+            raise
+
 
 
     def synchronize_and_clear_remote(self, remote_dir, local_dir):
         files_transferred = []
         try:
             self.log(f"Starting synchronization from {remote_dir} to {local_dir}")
-            files = self.list_files(remote_dir)  # Use list_files to get only files
+            files = self.list_files(remote_dir)  # Usa list_files per ottenere solo i file
             for file_attr in files:
-                if isinstance(file_attr, paramiko.SFTPAttributes):  # Ensures correct object type
+                if isinstance(file_attr, paramiko.SFTPAttributes):  # Assicura che l'oggetto sia del tipo corretto
                     remote_file = os.path.join(remote_dir, file_attr.filename.replace("\\", "/"))
                     local_file = os.path.join(local_dir, file_attr.filename)
                     self.download_file(remote_file, local_file)
-                    self.sftp.remove(remote_file)  # Remove the remote file after download
+                    self.remove_file(remote_file)  # Rimuovi il file remoto dopo il download
                     files_transferred.append(file_attr.filename)
             self.log("File synchronization and removal complete.")
         except Exception as e:
             self.log(f"Error during file synchronization: {e}")
             raise
         return files_transferred
+
 
     def list_files(self, remote_directory):
         """List only files in the specified remote directory."""
@@ -79,14 +92,16 @@ class SftpClient:
             raise
         return files
 
-    def download_file(self, remote_file, local_file):
+    def download_file(self, remote_path, local_path):
+        self.log(f"Downloading {remote_path} to {local_path}")
         try:
-            self.log(f"Downloading {remote_file} to {local_file}")
-            self.sftp.get(remote_file, local_file)
-            self.log(f"Downloaded file: {remote_file} to {local_file}")
+            self.sftp.get(remote_path, local_path)
+            self.log(f"Downloaded file: {remote_path} to {local_path}")
         except Exception as e:
-            self.log(f"Failed to download file {remote_file}: {e}")
-            raise
+            self.log(f"Failed to download file {remote_path}: {e}")
+            raise e
+
+
 
     def upload_file(self, local_file, remote_file):
         try:
