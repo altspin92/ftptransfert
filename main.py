@@ -769,10 +769,27 @@ class MainWindow(QWidget):
         self.log_window.clear()
         self.append_log("Log cleared.")
 
+    #def append_log(self, message):
+    #    current_time = datetime.now().strftime("%H:%M:%S")
+    #    log_message = f"[{current_time}] {message}"
+    #    self.log_window.appendPlainText(log_message)
+
+    #gestione ottimizata dei log 
     def append_log(self, message):
         current_time = datetime.now().strftime("%H:%M:%S")
         log_message = f"[{current_time}] {message}"
+
+        # Aggiungi il nuovo log
         self.log_window.appendPlainText(log_message)
+
+        # Limita a 500 righe
+        max_lines = 500
+        lines = self.log_window.toPlainText().splitlines()
+        if len(lines) > max_lines:
+            trimmed_text = '\n'.join(lines[-max_lines:])
+            self.log_window.setPlainText(trimmed_text)
+            self.log_window.moveCursor(Qt.TextCursor.End)
+
 
     def save_configuration(self):
         path, _ = QFileDialog.getSaveFileName(self, "Save Configuration", "", "JSON Files (*.json)")
