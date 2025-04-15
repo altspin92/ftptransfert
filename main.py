@@ -1,11 +1,14 @@
 import sys
+import logging
+logging.basicConfig(filename='log.txt', level=logging.INFO, format='[%(asctime)s] %(message)s')
 import json
 import os
-from PyQt5.QtWidgets import (QApplication, QWidget, QPushButton, QLineEdit, QLabel,
-                             QFileDialog, QMessageBox, QDialog, QFormLayout, QHBoxLayout,
-                             QVBoxLayout, QGridLayout, QRadioButton, QComboBox, QPlainTextEdit, QCheckBox)
+from PyQt5.QtWidgets import (
+    QApplication, QWidget, QPushButton, QLineEdit, QLabel,
+    QFileDialog, QMessageBox, QDialog, QFormLayout, QHBoxLayout,
+    QVBoxLayout, QGridLayout, QRadioButton, QComboBox, QCheckBox
+)
 from PyQt5.QtCore import QTimer, Qt
-from PyQt5.QtGui import QIcon, QPalette, QColor, QPixmap, QPainter, QBrush
 from datetime import datetime, timedelta
 import smtplib
 from email.mime.multipart import MIMEMultipart
@@ -27,6 +30,12 @@ def save_transfer_log(log):
         json.dump(log, file, indent=4)
 
 class EmailSettingsDialog(QDialog):
+    def safe_sync_files(self):
+        try:
+            self.sync_files()
+        except Exception as e:
+            logging.error(f'[CRASH PREVENUTO] {e}')
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Email Settings")
@@ -88,11 +97,10 @@ class MainWindow(QWidget):
         super().__init__()
         MainWindow.open_windows.append(self)
         self.setWindowTitle("FTP Bizpal")
-        self.setWindowIcon(QIcon('logo.jpeg'))
+        #self.setWindowIcon(QIcon('logo.jpeg'))
         self.email_settings = {}
         self.existing_files = set()
         self.initUI()
-        self.update_status_circle(False)
         self.setupTimer()
 
         
@@ -110,9 +118,6 @@ class MainWindow(QWidget):
         self.setLayout(grid)
 
         # Status circle indicator
-        self.status_label = QLabel()
-        self.update_status_circle(False)
-        grid.addWidget(self.status_label, 0, 2)
 
         # Radio buttons for transfer type
         self.direction_group = QHBoxLayout()
@@ -206,33 +211,19 @@ class MainWindow(QWidget):
         self.clearLogButton = QPushButton("Pulisci log")
         self.clearLogButton.clicked.connect(self.clear_logs)
 
-        self.log_window = QPlainTextEdit()
-        self.log_window.setReadOnly(True)
 
         grid.addWidget(self.clearLogButton, 10, 2)
-        grid.addWidget(self.log_window, 11, 0, 1, 3)
 
     def setupTimer(self):
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.sync_files)
         self.timer.start(30000)  # Default to 30 seconds
 
-    def update_status_circle(self, active):
-        print(f"Updating status circle to: {'green' if active else 'red'}")
-        pixmap = QPixmap(20, 20)  # Crea un pixmap di dimensioni 20x20
-        pixmap.fill(Qt.transparent)  # Rende il background trasparente
-        painter = QPainter(pixmap)
-        painter.setBrush(QColor("green") if active else QColor("red"))
-        painter.setPen(Qt.NoPen)  # Rimuove il bordo
-        painter.drawEllipse(0, 0, 20, 20)  # Disegna un cerchio
-        painter.end()
-        self.status_label.setPixmap(pixmap)
-        self.status_label.repaint()
+        
 
     #metodo di racoglimento log ultime 24 ore
     def get_recent_logs(self):
         """Ritorna i log delle ultime 24 ore."""
-        logs = self.log_window.toPlainText().split("\n")
         recent_logs = []
         now = datetime.now()
         for log in logs:
@@ -249,7 +240,6 @@ class MainWindow(QWidget):
 
     def sync_files(self):
         self.append_log("Starting synchronization...")
-        self.update_status_circle(True)
         QApplication.processEvents()
 
         direction = "to_remote" if self.to_remote_button.isChecked() else "to_local"
@@ -303,7 +293,7 @@ class MainWindow(QWidget):
             self.append_log(f"Error during synchronization: {e}")
 
         finally:
-            self.update_status_circle(False)
+            pass
 
 
 
@@ -349,7 +339,6 @@ class MainWindow(QWidget):
 
     def sync_files(self):
         self.append_log("Starting synchronization...")
-        self.update_status_circle(True)
         QApplication.processEvents()
         direction = "to_remote" if self.to_remote_button.isChecked() else ("to_local" if self.to_local_button.isChecked() else "local_to_local")
         transfer_log = load_transfer_log()
@@ -425,7 +414,7 @@ class MainWindow(QWidget):
         except Exception as e:
             self.append_log(f"Error during synchronization: {e}")
         finally:
-            self.update_status_circle(False)
+            pass
 
     def send_email_with_logs(self, files_transferred, direction):
         if not self.email_settings:
@@ -443,7 +432,6 @@ class MainWindow(QWidget):
 
     def get_recent_logs(self):
         """Estrai le ultime righe dei log (es. ultime 20 righe)"""
-        log_text = self.log_window.toPlainText()
         recent_logs = "\n".join(log_text.splitlines()[-20:])  # Ultime 20 righe
         return recent_logs
 
@@ -509,7 +497,6 @@ class MainWindow(QWidget):
 
     def get_logs_last_24_hours(self):
         """Recupera i log delle ultime 24 ore dalla finestra log."""
-        log_text = self.log_window.toPlainText()
         logs = log_text.splitlines()
         last_24_hours_logs = []
         now = datetime.now()
@@ -766,29 +753,16 @@ class MainWindow(QWidget):
 
 
     def clear_logs(self):
-        self.log_window.clear()
         self.append_log("Log cleared.")
 
     #def append_log(self, message):
     #    current_time = datetime.now().strftime("%H:%M:%S")
     #    log_message = f"[{current_time}] {message}"
-    #    self.log_window.appendPlainText(log_message)
 
     #gestione ottimizata dei log 
     def append_log(self, message):
-        current_time = datetime.now().strftime("%H:%M:%S")
-        log_message = f"[{current_time}] {message}"
+        logging.info(message)
 
-        # Aggiungi il nuovo log
-        self.log_window.appendPlainText(log_message)
-
-        # Limita a 500 righe
-        max_lines = 500
-        lines = self.log_window.toPlainText().splitlines()
-        if len(lines) > max_lines:
-            trimmed_text = '\n'.join(lines[-max_lines:])
-            self.log_window.setPlainText(trimmed_text)
-            self.log_window.moveCursor(Qt.TextCursor.End)
 
 
     def save_configuration(self):
