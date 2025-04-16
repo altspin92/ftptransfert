@@ -34,23 +34,6 @@ def save_transfer_log(log):
         json.dump(log, file, indent=4)
 
 class EmailSettingsDialog(QDialog):
-    def safe_sync_files(self):
-        try:
-            self.sync_files()
-        except Exception as e:
-            self.append_log(f'[CRASH PREVENUTO] {e}')
-        finally:
-            gc.collect()
-            MainWindow.cycle_counter += 1
-            process = psutil.Process(os.getpid())
-            mem = process.memory_info().rss / 1024 / 1024
-            self.append_log(f'[RAM] Utilizzo memoria: {mem:.2f} MB')
-            if MainWindow.cycle_counter % 10 == 0:
-                snapshot = tracemalloc.take_snapshot()
-                top_stats = snapshot.statistics('lineno')
-                self.append_log('[TRACEMALLOC] Top 5 allocazioni:')
-                for stat in top_stats[:5]:
-                    self.append_log(str(stat))
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Email Settings")
@@ -106,8 +89,24 @@ class EmailSettingsDialog(QDialog):
             QMessageBox.warning(self, "Test Email", f"Failed to send test email: {e}")
 
 class MainWindow(QWidget):
-    cycle_counter = 0
-    open_windows = []
+
+    def safe_sync_files(self):
+        try:
+            self.sync_files()
+        except Exception as e:
+            logging.error(f'[CRASH PREVENUTO] {e}')
+        finally:
+            gc.collect()
+            MainWindow.cycle_counter += 1
+            process = psutil.Process(os.getpid())
+            mem = process.memory_info().rss / 1024 / 1024
+            logging.info(f'[RAM] Utilizzo memoria: {mem:.2f} MB')
+            if MainWindow.cycle_counter % 3 == 0:
+                snapshot = tracemalloc.take_snapshot()
+                top_stats = snapshot.statistics('lineno')
+                logging.info('[TRACEMALLOC] Top 5 allocazioni:')
+                for stat in top_stats[:5]:
+                    logging.info(str(stat))
 
     def __init__(self):
         super().__init__()
