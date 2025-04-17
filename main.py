@@ -2,6 +2,8 @@ import sys
 import logging
 import tracemalloc
 import gc
+import multiprocessing
+import gc
 import os
 import psutil
 logging.basicConfig(filename='log.txt', level=logging.INFO, format='[%(asctime)s] %(message)s')
@@ -38,27 +40,27 @@ class EmailSettingsDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Email Settings")
         layout = QFormLayout(self)
-        
+
         self.smtpServerLineEdit = QLineEdit(self)
         self.smtpPortLineEdit = QLineEdit(self)
         self.usernameLineEdit = QLineEdit(self)
         self.passwordLineEdit = QLineEdit(self)
         self.passwordLineEdit.setEchoMode(QLineEdit.Password)
         self.recipientLineEdit = QLineEdit(self)
-        
+
         layout.addRow("SMTP Server:", self.smtpServerLineEdit)
         layout.addRow("SMTP Port:", self.smtpPortLineEdit)
         layout.addRow("Username:", self.usernameLineEdit)
         layout.addRow("Password:", self.passwordLineEdit)
         layout.addRow("Recipient Email:", self.recipientLineEdit)
-        
+
         self.testButton = QPushButton("Send Test Email", self)
         self.testButton.clicked.connect(self.send_test_email)
         self.saveButton = QPushButton("Save", self)
         self.saveButton.clicked.connect(self.accept)
         self.cancelButton = QPushButton("Cancel", self)
         self.cancelButton.clicked.connect(self.reject)
-        
+
         layout.addRow(self.testButton)
         layout.addRow(self.saveButton, self.cancelButton)
 
@@ -89,24 +91,43 @@ class EmailSettingsDialog(QDialog):
             QMessageBox.warning(self, "Test Email", f"Failed to send test email: {e}")
 
 class MainWindow(QWidget):
+    open_windows = []  # Traccia le finestre attive
 
     def safe_sync_files(self):
-        try:
-            self.sync_files()
-        except Exception as e:
-            logging.error(f'[CRASH PREVENUTO] {e}')
-        finally:
-            gc.collect()
-            MainWindow.cycle_counter += 1
-            process = psutil.Process(os.getpid())
-            mem = process.memory_info().rss / 1024 / 1024
-            logging.info(f'[RAM] Utilizzo memoria: {mem:.2f} MB')
-            if MainWindow.cycle_counter % 3 == 0:
-                snapshot = tracemalloc.take_snapshot()
-                top_stats = snapshot.statistics('lineno')
-                logging.info('[TRACEMALLOC] Top 5 allocazioni:')
-                for stat in top_stats[:5]:
-                    logging.info(str(stat))
+        def safe_sync_files(self):
+            try:
+                process = multiprocessing.Process(target=self.sync_files)
+                process.start()
+                process.join()
+            except Exception as e:
+                logging.error(f'[CRASH PREVENUTO - SUBPROCESS] {e}')
+            finally:
+                gc.collect()
+                MainWindow.cycle_counter += 1
+                try:
+                    import psutil, os
+                    proc = psutil.Process(os.getpid())
+                    mem = proc.memory_info().rss / 1024 / 1024
+                    logging.info(f'[RAM] Uso memoria processo principale: {mem:.2f} MB')
+                except Exception:
+                    pass
+                gc.collect()
+            try:
+                self.sync_files()
+            except Exception as e:
+                logging.error(f'[CRASH PREVENUTO] {e}')
+            finally:
+                gc.collect()
+                MainWindow.cycle_counter += 1
+                process = psutil.Process(os.getpid())
+                mem = process.memory_info().rss / 1024 / 1024
+                logging.info(f'[RAM] Utilizzo memoria: {mem:.2f} MB')
+                if MainWindow.cycle_counter % 3 == 0:
+                    snapshot = tracemalloc.take_snapshot()
+                    top_stats = snapshot.statistics('lineno')
+                    logging.info('[TRACEMALLOC] Top 5 allocazioni:')
+                    for stat in top_stats[:5]:
+                        logging.info(str(stat))
 
     def __init__(self):
         super().__init__()
@@ -118,7 +139,7 @@ class MainWindow(QWidget):
         self.initUI()
         self.setupTimer()
 
-        
+
 
         self.setup_daily_report()
         #aggiunta nome processo
@@ -234,7 +255,7 @@ class MainWindow(QWidget):
         self.timer.timeout.connect(self.sync_files)
         self.timer.start(30000)  # Default to 30 seconds
 
-        
+
 
     #metodo di racoglimento log ultime 24 ore
     def get_recent_logs(self):
@@ -315,6 +336,12 @@ class MainWindow(QWidget):
     # Resto delle funzioni
 
 
+        gc.collect()
+        # Cleanup oggetti
+        try:
+            del client, log, files, uploaded, downloaded
+        except Exception:
+            pass
     def open_new_window(self):  # Aggiunta la funzione per aprire una nuova finestra
         new_window = MainWindow()
         new_window.show()
@@ -431,6 +458,12 @@ class MainWindow(QWidget):
         finally:
             pass
 
+        gc.collect()
+        # Cleanup oggetti
+        try:
+            del client, log, files, uploaded, downloaded
+        except Exception:
+            pass
     def send_email_with_logs(self, files_transferred, direction):
         if not self.email_settings:
             QMessageBox.warning(self, "Email Settings", "Please configure your email settings first.")
@@ -688,12 +721,12 @@ class MainWindow(QWidget):
         try:
             src_dir = self.local_dir_line_edit.text()
             dest_dir = self.remote_dir_line_edit.text()
-            
+
             # Verifica che le directory di origine e destinazione siano valide
             if not os.path.isdir(src_dir) or not os.path.isdir(dest_dir):
                 self.append_log("Errore: directory di origine o destinazione non valida.")
                 return
-            
+
             self.append_log(f"Transferring files from {src_dir} to {dest_dir}...")
 
             files_transferred = []  # Lista per tenere traccia dei file trasferiti
@@ -701,7 +734,7 @@ class MainWindow(QWidget):
             for file in os.listdir(src_dir):
                 src_file = os.path.join(src_dir, file)
                 dest_file = os.path.join(dest_dir, file)
-                
+
                 # Solo i file vengono trasferiti
                 if os.path.isfile(src_file):
                     # Copia il file nella directory di destinazione
@@ -774,7 +807,7 @@ class MainWindow(QWidget):
     #    current_time = datetime.now().strftime("%H:%M:%S")
     #    log_message = f"[{current_time}] {message}"
 
-    #gestione ottimizata dei log 
+    #gestione ottimizata dei log
     def append_log(self, message):
         logging.info(message)
 
